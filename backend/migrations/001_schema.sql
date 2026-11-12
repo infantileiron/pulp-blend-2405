@@ -1,0 +1,3 @@
+-- New MySQL baseline created by SQLAlchemy metadata: datasets, specs, scenarios, runs, reviews, reports, users, audits.
+-- All six physical quality bounds are DOUBLE. Dataset attributes and widths use JSON number values.
+-- Existing deployments need reviewed migrations; no destructive automatic upgrades.

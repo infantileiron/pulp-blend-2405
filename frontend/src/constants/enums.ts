@@ -1,0 +1,1 @@
+export const roles=["admin","analyst","viewer"] as const;export const runStatuses=["queued","running","completed","infeasible","failed"] as const;export const properties=["strength","whiteness","recycled"] as const;export const propertyLabels:Record<string,string>={strength:"模拟强度指数",whiteness:"白度 %",recycled:"回收纤维率"};

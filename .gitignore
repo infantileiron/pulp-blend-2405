@@ -25,6 +25,8 @@ out/
 .vite/
 .parcel-cache/
 coverage/
+.pytest_cache/
+*.sqlite
 venv/
 target/
 *.o

@@ -25,7 +25,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 | 后端 | Python3.12、FastAPI0.115.6、SQLAlchemy2.0.36 |
 | 数值 | NumPy2.2.1、SciPy1.14.1 linprog/HiGHS |
 | 存储 | MySQL8.4 LTS、Redis7.4，六个质量界限列均DOUBLE |
-| 后台 | 独立worker、Redis队列、MySQL保存结果与不可变报告 |
+| 后台 | 独立worker、Redis通知队列、MySQL保存结果与不可变报告、租约+扫描自动恢复 |
 | 网关 | Nginx1.28，SPA回落，健康检查127.0.0.1 |
 
 五服务恰好frontend/backend/worker/db/redis，全部healthcheck，数据库/Redis/共享产物具名卷。清理 `docker compose down -v --remove-orphans`；保留数据时省略 `-v`。
@@ -91,8 +91,23 @@ Seed包含8种原浆、价格/供给/三属性及误差宽度，默认强度≥7
 
 自然键种子幂等；重复执行不覆盖用户修改说明。
 
+## 中断恢复与并发去重
+
+试算的权威状态在 MySQL，Redis 列表只负责唤醒 worker。每条试算建单时把原浆（深拷贝 `materials`）、六个质量界限、LHS 样本数/seed/成本扰动开关固化进 `runs.input_snapshot`；恢复重算只读快照，不读之后可能被改动的原浆、规格或情景，因此不会混入后来的修改。
+
+- **认领租约**：worker 用带 `locked_by/locked_at` 谓词的条件 `UPDATE` 原子把 `queued`（或租约过期的 `running`）置为 `running`，租约30秒、每8秒续租。多 worker 并发或重复投递同一 `run_id` 时，行锁保证只有一个 UPDATE 命中，其余跳过。
+- **自动恢复**：worker 启动先 `requeue_stuck` 把僵死 `running` 退回排队；运行中每10秒扫描一次，且 Redis 消息到达即认领。worker 崩溃后其租约过期，任一可用 worker 接管，`attempts` 累加。Redis 不可用或消息丢失也不丢单，扫描会捡起所有 `queued` 与过期 `running`。
+- **只落一份结果**：终态写入同样是条件 UPDATE（仅当前持有者且仍 `running` 才生效）；迟到的旧持有者写入被拒绝。`completed/infeasible/failed` 为终态，任何重投都不会重算或覆盖，已批准复核与报告归档保持原样。
+- **重复投递**：同一情景已有排队/运行中的试算时，再次 `POST /runs` 直接返回同一行（201），不建第二单、不入第二条队列。终态后再投递才新建下一单。
+- **存量库**：`initialize()` 对 `runs` 幂等补列（`input_snapshot/attempts/locked_by/locked_at/started_at/finished_at`），只加列不改历史行；补列前未完成的旧行会在首次计算时回填快照。
+- 运行底稿页显示尝试次数、开始/完成时间与固化的输入快照；`attempts>1` 时提示该试算经历过中断接管。
+
+## 测试
+
+`backend/` 下 `pytest`（依赖见 `requirements-dev.txt`），共25项，覆盖中断重启恢复、租约过期接管、真实多线程争抢、重复消息/重复提交去重、迟到写入拒绝、快照隔离后续改动、已完成试算与归档不动、存量库补列幂等，以及经 TestClient 的 HTTP 重复投递与权限。SQLite 文件库多连接模拟 MySQL 独立事务；并行用例以线程屏障制造真实争抢。
+
 ## 已知差异
 
-MySQL采用8.4 LTS而非8.0；Redis列表无worker崩溃自动重投/取消；新库建表无存量版本化迁移回滚；实体列表最多200条。仅模拟有限CSV原浆和独立均匀误差，没有真实供应商接口、工厂配方下发、非线性混合、相关误差或真实质量认证。Google Fonts断网时回退字体。
+MySQL采用8.4 LTS而非8.0；新库建表无存量版本化迁移回滚（runs 恢复字段以幂等补列方式增量升级）；实体列表最多200条。仅模拟有限CSV原浆和独立均匀误差，没有真实供应商接口、工厂配方下发、非线性混合、相关误差或真实质量认证。Google Fonts断网时回退字体。
 
 MIT License。真实检查见批次 `test-artifacts/gb-2306/TESTING.md`。
